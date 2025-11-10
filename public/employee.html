@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <title>PROCOMP Szerviz — Feladatkezelés</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+.muted { color: #6b7280; }
+.readonly {
+  pointer-events: none;       /* ne lehessen kattintani */
+  background-color: #f0f0f0;  /* halvány szürke hátteret ad */
+  color: #6b7280;             /* szürke szín */
+}
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+
+<div id="app" class="max-w-5xl mx-auto py-6 px-4">
+  <header class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+    <h1 class="text-2xl md:text-3xl font-extrabold text-indigo-600">🔧 PROCOMP Szerviz - Alkalmazott</h1>
+    <div id="userBox" class="flex items-center gap-4 flex-wrap"></div>
+  </header>
+  <main id="mainArea"></main>
+</div>
+
+<script>
+const main = document.getElementById('mainArea');
+const userBox = document.getElementById('userBox');
+
+function getCurrentUser() {
+  try { return JSON.parse(localStorage.getItem('pc_user')); } catch(e){ return null; }
+}
+function setCurrentUser(u) { 
+  localStorage.setItem('pc_user', JSON.stringify(u)); 
+  renderHeader(); 
+  renderEmployeeDashboard(); 
+}
+function clearCurrentUser() { 
+  localStorage.removeItem('pc_user'); 
+  renderHeader(); 
+  main.innerHTML=''; 
+}
+
+function renderHeader() {
+  const userBox = document.getElementById('userBox');
+  userBox.innerHTML = '';
+
+  fetch('/api/me')
+    .then(res => res.json())
+    .then(user => {
+      if (user && user.ID_OPERATOR) {
+        // Alkalmazott be van lépve
+        const badge = document.createElement('div');
+        badge.innerText = `Szervizes — ${user.NEV}`;
+        badge.className = 'text-sm px-3 py-2 rounded-full bg-indigo-50 text-indigo-700';
+        const logout = document.createElement('button');
+        logout.innerText = 'Kijelentkezés';
+        logout.className = 'text-sm text-gray-600 underline';
+        logout.addEventListener('click', async () => {
+          await fetch('/api/logout', { method: 'POST' });
+          window.location.href = '/index.html';
+        });
+        userBox.appendChild(badge);
+        userBox.appendChild(logout);
+      } else {
+        // Nincs bejelentkezve → login oldal
+        const loginBtn = document.createElement('button');
+        loginBtn.innerText = 'Bejelentkezés';
+        loginBtn.className = 'bg-indigo-600 text-white py-2 px-4 rounded-xl hover:bg-indigo-700';
+        loginBtn.addEventListener('click', () => {
+          window.location.href = '/login.html';
+        });
+        userBox.appendChild(loginBtn);
+      }
+    })
+    .catch(err => {
+      console.error('Profil betöltési hiba:', err);
+    });
+}
+
+/* EMPLOYEE DASHBOARD – táblázatos verzió */
+async function renderEmployeeDashboard() {
+  main.innerHTML = `
+    <!-- 🔹 STATISZTIKA -->
+    <section class="bg-white p-6 rounded-2xl shadow mb-6">
+      <h2 class="text-lg font-semibold mb-4">Statisztika</h2>
+      <div id="taskStats" class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+        <div class="p-4 bg-indigo-50 rounded-xl">
+          <div class="text-sm text-gray-500">Folyamatban</div>
+          <div id="statProcess" class="text-2xl font-bold text-indigo-700"></div>
+        </div>
+        <div class="p-4 bg-green-50 rounded-xl">
+          <div class="text-sm text-gray-500">Kész</div>
+          <div id="statClosed" class="text-2xl font-bold text-green-700"></div>
+        </div>
+        <div class="p-4 bg-yellow-50 rounded-xl">
+          <div class="text-sm text-gray-500">Árajánlat küldve</div>
+          <div id="statSent" class="text-2xl font-bold text-yellow-700"></div>
+        </div>
+        <div class="p-4 bg-gray-50 rounded-xl">
+          <div class="text-sm text-gray-500">Mai nap</div>
+          <div id="statToday" class="text-2xl font-bold text-gray-700"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 🔹 SZERVÍZFOLYAMATOK TÁBLÁZAT -->
+    <section class="bg-white p-6 rounded-2xl shadow">
+      <div class="flex flex-wrap gap-3 mb-4 items-center justify-between">
+        <h2 class="text-lg font-semibold">Szervízfolyamatok</h2>
+        <div class="flex gap-2 flex-wrap">
+          <input id="taskSearch" placeholder="Gyorskeresés..." class="border p-2 rounded-lg" />
+          <select id="statusFilter" class="border p-2 rounded-lg">
+            <option value="">Összes státusz</option>
+            <option value="indítva">Indítva</option>
+            <option value="process">Folyamatban</option>
+            <option value="closed">Lezárva</option>
+          </select>
+          <button id="taskRefresh" class="bg-indigo-600 text-white px-4 py-2 rounded-xl">Frissít</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full border text-sm" id="taskTable">
+          <thead class="bg-indigo-50">
+            <tr>
+              <th class="p-2 cursor-pointer sort" data-field="DATUMIDO">📅 Felvételi dátum</th>
+              <th class="p-2">Név</th>
+              <th class="p-2">Email</th>
+              <th class="p-2">Tétel</th>
+              <th class="p-2">Státusz</th>
+              <th class="p-2 text-right">Összeg</th>
+            </tr>
+          </thead>
+          <tbody id="taskTableBody">
+            <tr><td colspan="6" class="p-4 text-center text-gray-500">Betöltés...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div id="detailModal"></div>
+  `;
+
+  document.getElementById('taskRefresh').addEventListener('click', loadTasks);
+  document.getElementById('taskSearch').addEventListener('input', filterTasks);
+  document.getElementById('statusFilter').addEventListener('change', filterTasks);
+  document.querySelector('.sort').addEventListener('click', sortByDate);
+
+  await loadTasks();
+}
+
+/* --- Segéd: statisztika animáció --- */
+function animateCount(el, target) {
+  const duration = 600;
+  const start = parseInt(el.textContent) || 0;
+  const startTime = performance.now();
+  function update(time) {
+    const progress = Math.min((time - startTime) / duration, 1);
+    el.textContent = Math.floor(start + (target - start) * progress);
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+/* --- Statisztika frissítés --- */
+function updateStats(tasks) {
+  const today = new Date().toISOString().slice(0, 10);
+  const stats = {
+    statProcess: tasks.filter(t => t.KONDI === 'process').length,
+    statClosed: tasks.filter(t => t.KONDI === 'closed').length,
+    statSent: tasks.filter(t => t.KONDI === 'sent').length,
+    statToday: tasks.filter(t => (t.DATUMIDO || '').slice(0, 10) === today).length
+  };
+  for (const [id, val] of Object.entries(stats)) {
+    const el = document.getElementById(id);
+    if (el) animateCount(el, val);
+  }
+}
+
+let allTasks = [];
+let sortAsc = true;
+
+/* --- Betöltés backendről --- */
+async function loadTasks() {
+  const body = document.getElementById('taskTableBody');
+  body.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-gray-500">Betöltés...</td></tr>`;
+  try {
+    const res = await fetch('/api/users/tasks');
+    const data = await res.json();
+    allTasks = data || [];
+    renderTasks(allTasks);
+    updateStats(allTasks);
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="6" class="p-4 text-red-600">Hiba a betöltéskor.</td></tr>`;
+  }
+}
+
+/* --- Táblázat renderelése --- */
+function renderTasks(tasks) {
+  const body = document.getElementById('taskTableBody');
+  if (!tasks.length) {
+    body.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-gray-500">Nincs találat.</td></tr>`;
+    return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  body.innerHTML = tasks.map(t => {
+    const kiad = t.KIAD_DATUM || t.KIAD_DAT || '';
+    let warn = '';
+    if (kiad) {
+      const d = kiad.slice(0,10);
+      if (d === today) warn = '<span class="text-red-600 font-bold">⚠</span>';
+      else if (d < today) warn = '<span class="text-orange-600 font-bold">⛔</span>';
+    }
+    return `
+      <tr class="border-b hover:bg-indigo-50 cursor-pointer" onclick="openDetail(${t.ID_KOSAR})">
+        <td class="p-2">${(t.DATUMIDO||'').slice(0,10)} ${warn}</td>
+        <td class="p-2 font-semibold">${t.NEV||''}</td>
+        <td class="p-2">${t.EMAIL||''}</td>
+        <td class="p-2">${t.tetelNev||'-'}</td>
+        <td class="p-2">${t.KONDI||'indítva'}</td>
+        <td class="p-2 text-right">${t.VEGOSSZEG ? t.VEGOSSZEG.toLocaleString()+' Ft' : '-'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+/* --- Keresés + szűrés --- */
+function filterTasks() {
+  const q = document.getElementById('taskSearch').value.toLowerCase();
+  const s = document.getElementById('statusFilter').value.toLowerCase();
+  const filtered = allTasks.filter(t =>
+    (t.NEV||'').toLowerCase().includes(q) ||
+    (t.EMAIL||'').toLowerCase().includes(q) ||
+    (t.KONDI||'').toLowerCase().includes(q)
+  ).filter(t => !s || (t.KONDI||'').toLowerCase() === s);
+  renderTasks(filtered);
+}
+
+/* --- Rendezés dátum szerint --- */
+function sortByDate() {
+  sortAsc = !sortAsc;
+  const sorted = [...allTasks].sort((a,b)=>{
+    const d1 = new Date(a.DATUMIDO||0), d2 = new Date(b.DATUMIDO||0);
+    return sortAsc ? d1 - d2 : d2 - d1;
+  });
+  renderTasks(sorted);
+}
+
+/* --- Részletes / szerkeszthető nézet --- */
+async function openDetail(id) {
+  const t = allTasks.find(x => x.ID_KOSAR == id);
+  if (!t) return;
+  const modal = document.getElementById('detailModal');
+  modal.innerHTML = `
+    <div class="fixed inset-0 bg-black/30 flex items-start justify-center p-4 overflow-auto z-50">
+      <div class="bg-white rounded-2xl shadow-lg p-6 max-w-3xl w-full">
+        <h3 class="text-xl font-semibold mb-4">Részletes adatok</h3>
+        <div class="grid md:grid-cols-2 gap-3 mb-4">
+          <input id="editNev" value="${t.NEV||''}" class="border p-2 rounded-lg" placeholder="Név" />
+          <input id="editEmail" value="${t.EMAIL||''}" class="border p-2 rounded-lg" placeholder="Email" />
+          <input id="editMunkaora" type="number" value="${t.MUNKAORA||''}" class="border p-2 rounded-lg" placeholder="Munkaóra" />
+          <input id="editMunkadij" type="number" value="${t.MUNkADIJ||''}" class="border p-2 rounded-lg" placeholder="Munkadíj (Ft)" />
+          <input id="editAnyagdij" type="number" value="${t.ANYAGDIJ||''}" class="border p-2 rounded-lg" placeholder="Anyagdíj (Ft)" />
+          <select id="editKondi" class="border p-2 rounded-lg">
+            <option value="indítva" ${t.KONDI==='indítva'?'selected':''}>Indítva</option>
+            <option value="process" ${t.KONDI==='process'?'selected':''}>Folyamatban</option>
+            <option value="closed" ${t.KONDI==='closed'?'selected':''}>Lezárva</option>
+          </select>
+        </div>
+        <textarea id="editLeiras" class="border p-2 rounded-lg w-full h-24" placeholder="Leírás">${t.LEIRAS||''}</textarea>
+        <div class="mt-4 flex justify-end gap-2">
+          <button id="saveBtn" class="bg-green-600 text-white px-4 py-2 rounded-xl">Mentés</button>
+          <button id="closeBtn" class="bg-gray-200 px-4 py-2 rounded-xl">Bezár</button>
+        </div>
+        <p id="editMsg" class="text-sm mt-2 text-gray-600"></p>
+      </div>
+    </div>
+  `;
+  modal.querySelector('#closeBtn').onclick = () => modal.innerHTML = '';
+  modal.querySelector('#saveBtn').onclick = async () => {
+    const updated = {
+      NEV: document.getElementById('editNev').value,
+      EMAIL: document.getElementById('editEmail').value,
+      MUNKAORA: +document.getElementById('editMunkaora').value,
+      MUNkADIJ: +document.getElementById('editMunkadij').value,
+      ANYAGDIJ: +document.getElementById('editAnyagdij').value,
+      LEIRAS: document.getElementById('editLeiras').value,
+      KONDI: document.getElementById('editKondi').value
+    };
+    const msg = modal.querySelector('#editMsg');
+    try {
+      const res = await fetch('/api/users/tasks/'+id, {
+        method:'PUT',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(updated)
+      });
+      const data = await res.json();
+      msg.textContent = data.message;
+      if (res.ok) {
+        await loadTasks();
+        setTimeout(()=> modal.innerHTML='',800);
+      }
+    } catch (err) {
+      console.error(err);
+      msg.textContent = 'Hiba mentés közben.';
+    }
+  };
+}
+
+renderHeader();
+if (getCurrentUser()) renderEmployeeDashboard();
+</script>
+
+</body>
+</html>
